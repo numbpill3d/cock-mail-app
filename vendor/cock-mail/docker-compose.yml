@@ -1,0 +1,50 @@
+version: "3.3"
+services:
+  nginx:
+    image: "local.local/cock-mail/nginx:latest"
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    restart: always
+    links:
+      - websockify_imap
+      - websockify_smtp
+    ports:
+      - "8143:8143"
+      - "8142:8142"
+  websockify_imap:
+    image: "local.local/cock-mail/websockify:latest"
+    build: docker/websockify
+    restart: always
+    # ---simple: no SSL, no proxy (private mail server with local access)
+    #command: ["websockify", "-v", "8143", "dovecot:143"]
+    #
+    # ---SSL but no proxy (public mail server you don't control)
+    #command: ["websockify", "--ssl-target", "-v", "8143", "dovecot:993"]
+    #
+    # ---proxy but no SSL (your own mail server with local or secure access)
+    #command: ["websockify", "--haproxy=2", "-v", "8143", "dovecot:20143"]
+    #
+    # ---proxy and SSL (your own mail server with remote access)
+    #command: ["websockify", "--haproxy=2", "--ssl-target", "-v", "8143", "dovecot:10993"]
+    #
+    # ---proxy and SSL + custom SSL host name (when your dns hostname != SSL hostname)
+    #command: ["websockify", "--haproxy=2", "--ssl-target", "--ssl-target-name=mail.example.com", "-v", "8143", "dovecot:10993"]
+  websockify_smtp:
+    image: "local.local/cock-mail/websockify:latest"
+    build: docker/websockify
+    restart: always
+    # ---simple: no SSL, no proxy (private mail server with local access)
+    #command: ["websockify", "-v", "8025", "postfix:25"]
+    #
+    # ---SSL but no proxy (public mail server you don't control)
+    #command: ["websockify", "--ssl-target", "-v", "8025", "postfix:465"]
+    #
+    # ---proxy but no SSL (your own mail server with local or secure access)
+    #command: ["websockify", "--haproxy=2", "-v", "8025", "postfix:20025"]
+    #
+    # ---proxy and SSL (your own mail server with remote access)
+    #command: ["websockify", "--haproxy=2", "--ssl-target", "-v", "8025", "postfix:10465"]
+    #
+    # ---proxy and SSL + custom SSL host name (when your dns hostname != SSL hostname)
+    #command: ["websockify", "--haproxy=2", "--ssl-target", "--ssl-target-name=mail.example.com", "-v", "8025", "postfix:10465"]

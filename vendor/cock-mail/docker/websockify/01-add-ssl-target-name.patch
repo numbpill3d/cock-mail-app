@@ -1,0 +1,70 @@
+diff --git a/websockify/websocketproxy.py b/websockify/websocketproxy.py
+index f619137..17a8566 100644
+--- a/websockify/websocketproxy.py
++++ b/websockify/websocketproxy.py
+@@ -128,6 +128,7 @@ Traffic Legend:
+                                                            self.server.target_port,
+                                                            connect=True,
+                                                            use_ssl=self.server.ssl_target,
++                                                           ssl_host=self.server.ssl_target_name,
+                                                            unix_socket=self.server.unix_target,
+                                                            haproxy=haproxy)
+         except Exception as e:
+@@ -310,14 +311,15 @@ class WebSocketProxy(websockifyserver.WebSockifyServer):
+ 
+     def __init__(self, RequestHandlerClass=ProxyRequestHandler, *args, **kwargs):
+         # Save off proxy specific options
+-        self.target_host    = kwargs.pop('target_host', None)
+-        self.target_port    = kwargs.pop('target_port', None)
+-        self.wrap_cmd       = kwargs.pop('wrap_cmd', None)
+-        self.wrap_mode      = kwargs.pop('wrap_mode', None)
+-        self.unix_target    = kwargs.pop('unix_target', None)
+-        self.ssl_target     = kwargs.pop('ssl_target', None)
+-        self.heartbeat      = kwargs.pop('heartbeat', None)
+-        self.haproxy        = kwargs.pop('haproxy', None)
++        self.target_host     = kwargs.pop('target_host', None)
++        self.target_port     = kwargs.pop('target_port', None)
++        self.wrap_cmd        = kwargs.pop('wrap_cmd', None)
++        self.wrap_mode       = kwargs.pop('wrap_mode', None)
++        self.unix_target     = kwargs.pop('unix_target', None)
++        self.ssl_target      = kwargs.pop('ssl_target', None)
++        self.ssl_target_name = kwargs.pop('ssl_target_name', None)
++        self.heartbeat       = kwargs.pop('heartbeat', None)
++        self.haproxy         = kwargs.pop('haproxy', None)
+ 
+         self.token_plugin = kwargs.pop('token_plugin', None)
+         self.host_token = kwargs.pop('host_token', None)
+@@ -511,6 +513,8 @@ def websockify_init():
+             help="disallow non-encrypted client connections")
+     parser.add_option("--ssl-target", action="store_true",
+             help="connect to SSL target as SSL client")
++    parser.add_option("--ssl-target-name", default=None, metavar="NAME",
++            help="specify SSL target hostname to verify")
+     parser.add_option("--verify-client", action="store_true",
+             help="require encrypted client to present a valid certificate "
+             "(needs Python 2.7.9 or newer or Python 3.4 or newer)")
+diff --git a/websockify/websockifyserver.py b/websockify/websockifyserver.py
+index 137a4cf..22568f3 100644
+--- a/websockify/websockifyserver.py
++++ b/websockify/websockifyserver.py
+@@ -428,7 +428,7 @@ class WebSockifyServer():
+     @staticmethod
+     def socket(host, port=None, connect=False, prefer_ipv6=False,
+                unix_socket=None, unix_socket_mode=None, unix_socket_listen=False,
+-               use_ssl=False, tcp_keepalive=True, tcp_keepcnt=None,
++               use_ssl=False, ssl_host=None, tcp_keepalive=True, tcp_keepcnt=None,
+                tcp_keepidle=None, tcp_keepintvl=None, haproxy=None):
+         """ Resolve a host (and optional port) to an IPv4 or IPv6
+         address. Create a socket. Bind to it if listen is set,
+@@ -505,7 +505,10 @@ class WebSockifyServer():
+                     sock.send(haproxy_output)
+                 if use_ssl:
+                     context = ssl.create_default_context()
+-                    sock = context.wrap_socket(sock, server_hostname=host)
++                    if ssl_host:
++                        sock = context.wrap_socket(sock, server_hostname=ssl_host)
++                    else:
++                        sock = context.wrap_socket(sock, server_hostname=host)
+             else:
+                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                 sock.bind(addrs[0][4])

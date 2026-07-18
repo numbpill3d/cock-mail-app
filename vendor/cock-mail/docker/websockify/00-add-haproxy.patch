@@ -1,0 +1,144 @@
+diff --git a/websockify/websocketproxy.py b/websockify/websocketproxy.py
+index 5afec81..f619137 100644
+--- a/websockify/websocketproxy.py
++++ b/websockify/websocketproxy.py
+@@ -105,14 +105,31 @@ Traffic Legend:
+ 
+         if self.server.ssl_target:
+             msg += " (using SSL)"
++
++        if self.server.haproxy:
++            msg += " (using haproxy)"
++
+         self.log_message(msg)
+ 
++        haproxy = None
++
++        if self.server.haproxy and int(self.server.haproxy) == 2:
++            haproxy = ['127.0.0.1',0,'127.0.0.1',0]
++            try:
++                haproxy[0] = self.server.server_host
++                haproxy[1] = self.server.server_port
++                haproxy[3] = self.server.client_port
++                haproxy[2] = self.headers['X-Forwarded-For'].split(',')[-1]
++            except (IndexError, KeyError, NameError) as e:
++                pass
++
+         try:
+             tsock = websockifyserver.WebSockifyServer.socket(self.server.target_host,
+                                                            self.server.target_port,
+                                                            connect=True,
+                                                            use_ssl=self.server.ssl_target,
+-                                                           unix_socket=self.server.unix_target)
++                                                           unix_socket=self.server.unix_target,
++                                                           haproxy=haproxy)
+         except Exception as e:
+             self.log_message("Failed to connect to %s:%s: %s",
+                              self.server.target_host, self.server.target_port, e)
+@@ -300,6 +317,7 @@ class WebSocketProxy(websockifyserver.WebSockifyServer):
+         self.unix_target    = kwargs.pop('unix_target', None)
+         self.ssl_target     = kwargs.pop('ssl_target', None)
+         self.heartbeat      = kwargs.pop('heartbeat', None)
++        self.haproxy        = kwargs.pop('haproxy', None)
+ 
+         self.token_plugin = kwargs.pop('token_plugin', None)
+         self.host_token = kwargs.pop('host_token', None)
+@@ -379,6 +397,9 @@ class WebSocketProxy(websockifyserver.WebSockifyServer):
+         if self.ssl_target:
+             msg += " (using SSL)"
+ 
++        if self.haproxy:
++            msg += " (using haproxy)"
++
+         self.msg("%s", msg)
+ 
+         if self.wrap_cmd:
+@@ -548,6 +569,8 @@ def websockify_init():
+                            "on instantiation")
+     parser.add_option("--heartbeat", type=int, default=0, metavar="INTERVAL",
+             help="send a ping to the client every INTERVAL seconds")
++    parser.add_option("--haproxy", type=int, default=0, metavar="VERSION",
++                      help="Send haproxy PROXY headers (only v2 supported)")
+     parser.add_option("--log-file", metavar="FILE",
+             dest="log_file",
+             help="File where logs will be saved")
+diff --git a/websockify/websockifyserver.py b/websockify/websockifyserver.py
+index 78613fb..137a4cf 100644
+--- a/websockify/websockifyserver.py
++++ b/websockify/websockifyserver.py
+@@ -15,6 +15,7 @@ as taken from http://docs.python.org/dev/library/ssl.html#certificates
+ import os, sys, time, errno, signal, socket, select, logging
+ import multiprocessing
+ from http.server import SimpleHTTPRequestHandler
++from ipaddress import ip_address
+ 
+ # Degraded functionality if these imports are missing
+ for mod, msg in [('ssl', 'TLS/SSL/wss is disabled'),
+@@ -427,8 +428,8 @@ class WebSockifyServer():
+     @staticmethod
+     def socket(host, port=None, connect=False, prefer_ipv6=False,
+                unix_socket=None, unix_socket_mode=None, unix_socket_listen=False,
+-               use_ssl=False, tcp_keepalive=True, tcp_keepcnt=None, 
+-               tcp_keepidle=None, tcp_keepintvl=None):
++               use_ssl=False, tcp_keepalive=True, tcp_keepcnt=None,
++               tcp_keepidle=None, tcp_keepintvl=None, haproxy=None):
+         """ Resolve a host (and optional port) to an IPv4 or IPv6
+         address. Create a socket. Bind to it if listen is set,
+         otherwise connect to it. Return the socket.
+@@ -442,6 +443,8 @@ class WebSockifyServer():
+             raise Exception("SSL socket requested but Python SSL module not loaded.");
+         if not connect and use_ssl:
+             raise Exception("SSL only supported in connect mode (for now)")
++        if not connect and haproxy:
++            raise Exception("Haproxy only supported in connect mode (for now)")
+         if not connect:
+             flags = flags | socket.AI_PASSIVE
+ 
+@@ -469,6 +472,37 @@ class WebSockifyServer():
+ 
+             if connect:
+                 sock.connect(addrs[0][4])
++                if haproxy != None:
++                    # Forcing everything to IPv6 solves the problem of server IP version != client IP version
++                    client_ip = ip_address(haproxy[2])
++                    if client_ip.version == 4: client_ip = ip_address('::ffff:' + haproxy[2])
++                    server_ip = ip_address(haproxy[0])
++                    if server_ip.version == 4: server_ip = ip_address('::ffff:' + haproxy[0])
++                    #server_ip = ip_address('::143') if client_ip.version == 6 else ip_address('127.0.0.143')
++
++                    server_port = haproxy[1]
++                    client_port = haproxy[3]
++
++                    haproxy_output  = b"\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A" #magic
++                    haproxy_output += b"\x21" #protocol + PROXY command
++                    #haproxy_output += b"\x21" if client_ip.version == 6 else b"\x11" #IP version and TCP
++                    haproxy_output += b"\x21" #IP version and TCP
++                    #haproxy_output += b"\x00\x2c" if client_ip.version == 6 else b"\x00\x14" #IP header length
++                    haproxy_output += b"\x00\x2c" #IP header length
++                    haproxy_output += client_ip.packed #client IP
++                    haproxy_output += server_ip.packed #dest IP
++                    haproxy_output += client_port.to_bytes(2, byteorder='big') #client_port
++                    haproxy_output += server_port.to_bytes(2, byteorder='big') #server_port
++
++                    #3 bytes
++                    haproxy_output += b"\x20" #PP2_TYPE_SSL
++                    haproxy_output += b"\x00\x05" #length
++
++                    #5 bytes
++                    haproxy_output += b"\x01" #PP2_CLIENT_SSL
++                    haproxy_output += b"\x00\x00\x00\x00" #uint32_t <client>
++
++                    sock.send(haproxy_output)
+                 if use_ssl:
+                     context = ssl.create_default_context()
+                     sock = context.wrap_socket(sock, server_hostname=host)
+@@ -800,6 +834,9 @@ class WebSockifyServer():
+                                 # Unix Socket will not report address (empty string), but address[0] is logged a bunch
+                                 if self.unix_listen != None:
+                                     address = [ self.unix_listen ]
++                                elif self.listen_fd == None:
++                                    self.server_host, self.server_port = startsock.getsockname()
++                                    self.client_host, self.client_port = address
+                             else:
+                                 continue
+                         except self.Terminate:

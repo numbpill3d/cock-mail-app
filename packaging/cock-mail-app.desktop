@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Cock-mail
+GenericName=Webmail Client
+Comment=Run Cock-mail locally like a desktop app
+Exec=cock-mail-app-launch
+Icon=cock-mail-app
+Terminal=false
+Categories=Network;Email;
+StartupNotify=true

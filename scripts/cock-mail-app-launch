@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="/opt/cock-mail-app/cock-mail"
+STATE_DIR="${XDG_STATE_HOME:-"$HOME/.local/state"}/cock-mail-app"
+URL="${COCK_MAIL_APP_URL:-http://127.0.0.1:18142/}"
+
+err() {
+    printf 'cock-mail-app: %s\n' "$*" >&2
+}
+
+need() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        err "missing required command: $1"
+        exit 1
+    fi
+}
+
+need docker
+need xdg-open
+
+if ! docker compose version >/dev/null 2>&1; then
+    err "docker compose is not available or your user cannot access Docker"
+    err "start Docker and make sure this user can run: docker compose version"
+    exit 1
+fi
+
+mkdir -p "$STATE_DIR"
+
+for item in public docker build-base.sh docker-compose.yml README.txt; do
+    rm -rf "$STATE_DIR/$item"
+    cp -a "$APP_DIR/$item" "$STATE_DIR/$item"
+done
+
+cat > "$STATE_DIR/docker-compose.override.yml" <<'EOF'
+services:
+  nginx:
+    ports: !override
+      - "127.0.0.1:18143:8143"
+      - "127.0.0.1:18142:8142"
+  websockify_imap:
+    command: ["websockify", "--ssl-target", "-v", "8143", "mail.cock.li:993"]
+  websockify_smtp:
+    command: ["websockify", "--ssl-target", "-v", "8025", "mail.cock.li:465"]
+EOF
+
+cd "$STATE_DIR"
+
+if ! docker image inspect local.local/alpine:mini >/dev/null 2>&1; then
+    bash build-base.sh
+fi
+
+docker compose up -d
+xdg-open "$URL" >/dev/null 2>&1 &
